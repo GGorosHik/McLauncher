@@ -1,0 +1,21 @@
+# Rust / Tauri
+target/
+src-tauri/gen/
+
+# Node
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# Local secrets
+.env
+.env.local

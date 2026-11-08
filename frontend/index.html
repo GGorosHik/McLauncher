@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MC Launcher</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+              <path d="M12 2 3 7v10l9 5 9-5V7z" />
+              <path d="M3 7l9 5 9-5M12 12v10" />
+            </svg>
+          </div>
+          <div>
+            <h1>MC Launcher</h1>
+            <p id="subtitle">Checking for updates…</p>
+          </div>
+        </div>
+        <button id="btn-check" class="btn btn-ghost" type="button">Check for updates</button>
+      </header>
+
+      <main class="content">
+        <section class="card">
+          <div class="card-head">
+            <h2>Install location</h2>
+            <span id="layout-badge" class="badge">—</span>
+          </div>
+          <div class="row">
+            <input id="install-dir" type="text" spellcheck="false" autocomplete="off" placeholder="Choose a folder…" />
+            <button id="btn-browse" class="btn" type="button">Browse</button>
+          </div>
+          <p class="hint" id="install-hint">The client is downloaded and launched from this folder.</p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Memory</h2>
+            <span class="badge" id="ram-badge">2 – 4 GB</span>
+          </div>
+          <div class="slider-block">
+            <div class="slider-label"><span>Minimum</span><strong id="min-value">2 GB</strong></div>
+            <input id="min-ram" type="range" min="1" max="32" step="1" value="2" />
+          </div>
+          <div class="slider-block">
+            <div class="slider-label"><span>Maximum</span><strong id="max-value">4 GB</strong></div>
+            <input id="max-ram" type="range" min="1" max="32" step="1" value="4" />
+          </div>
+          <p class="hint" id="ram-hint">Detected system memory: —</p>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Update source</h2>
+          </div>
+          <div class="row">
+            <input id="repo" type="text" spellcheck="false" autocomplete="off" placeholder="owner/repo" />
+          </div>
+          <div class="row compact">
+            <input id="tag" type="text" spellcheck="false" autocomplete="off" placeholder="Tag (empty = latest)" />
+          </div>
+          <div id="update-box" class="update-box hidden"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Java</h2>
+          </div>
+          <div class="row">
+            <input id="java-path" type="text" spellcheck="false" autocomplete="off" placeholder="Auto-detect" />
+            <button id="btn-java" class="btn" type="button">Browse</button>
+          </div>
+          <p class="hint" id="java-hint">Detecting runtimes…</p>
+        </section>
+
+        <section id="progress-card" class="card progress-card hidden">
+          <div class="card-head">
+            <h2 id="progress-stage">Installing</h2>
+            <span class="badge" id="progress-percent">0%</span>
+          </div>
+          <div class="progress-track"><span id="progress-bar"></span></div>
+          <p class="hint" id="progress-message">Starting…</p>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div id="status" class="status">Ready</div>
+        <div class="actions">
+          <button id="btn-stop" class="btn btn-danger hidden" type="button">Stop game</button>
+          <button id="btn-install" class="btn" type="button">Download client</button>
+          <button id="btn-play" class="btn btn-primary" type="button">Play</button>
+        </div>
+      </footer>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
