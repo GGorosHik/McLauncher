@@ -48,6 +48,9 @@ pub struct ClientLayout {
 const SETTINGS_FILE: &str = "settings.json";
 const DEFAULT_DIR_NAME: &str = "Minecraft";
 
+/// Where client updates come from. Fixed at build time and never shown in the UI.
+pub const DEFAULT_REPO: &str = "GGorosHik/McLauncher";
+
 pub fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -66,9 +69,8 @@ pub fn load_settings(app: &AppHandle) -> Result<Settings, String> {
     if settings.install_dir.trim().is_empty() {
         settings.install_dir = default_install_dir(app)?.to_string_lossy().to_string();
     }
-    if settings.repo.trim().is_empty() {
-        settings.repo = std::env::var("LAUNCHER_REPO").unwrap_or_default();
-    }
+    // The download source is baked into the build; it is never shown or edited in the UI.
+    settings.repo = DEFAULT_REPO.to_string();
     Ok(settings)
 }
 

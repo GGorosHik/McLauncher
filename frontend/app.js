@@ -13,8 +13,6 @@ const ui = {
   layoutBadge: el('layout-badge'),
   heroTitle: el('hero-title'),
   heroPath: el('hero-path'),
-  repo: el('repo'),
-  tag: el('tag'),
   updateBox: el('update-box'),
   progressCard: el('progress-card'),
   progressStage: el('progress-stage'),
@@ -134,7 +132,6 @@ function readSettings() {
     maxRamGb: Number(ui.maxRam.value),
     javaPath: ui.javaPath.value.trim(),
     javaArgs: ui.javaArgs.value.trim(),
-    repo: ui.repo.value.trim(),
     installedTag: state.settings?.installedTag ?? '',
   };
 }
@@ -143,7 +140,6 @@ function applySettings(settings) {
   state.settings = settings;
   const ram = sanitizeRam(settings);
   ui.installDir.value = settings.installDir ?? '';
-  ui.repo.value = settings.repo ?? '';
   ui.javaPath.value = settings.javaPath ?? '';
   ui.javaArgs.value = settings.javaArgs ?? '';
   ui.minRam.value = String(ram.min);
@@ -198,7 +194,7 @@ async function refresh() {
     ui.layoutBadge.className = 'badge warn';
     ui.heroTitle.textContent = 'Install a client to get started';
     ui.heroPath.textContent = info.settings.installDir || '—';
-    ui.installHint.textContent = 'No client here yet. Press “Download client” to fetch it from GitHub.';
+    ui.installHint.textContent = 'No client installed yet. Press “Download client” to install it.';
   }
 
   if (info.java.length) {
@@ -212,13 +208,12 @@ async function refresh() {
 }
 
 /* ---------- Updates ---------- */
-async function checkForUpdates() {
-  const repo = ui.repo.value.trim();
-  if (!repo) { setStatus('Enter a repository as owner/repo', 'err'); return; }
-  state.busy = true; setButtons();
-  setStatus('Checking GitHub…');
+async function checkForUpdates(silent = false) {
+  if (!silent) setStatus('Checking for updates…');
+  state.busy = !silent;
+  if (!silent) setButtons();
   try {
-    const info = await invoke('check_update', { repo, tag: ui.tag.value.trim() });
+    const info = await invoke('check_update', { repo: '', tag: '' });
     ui.updateBox.classList.remove('hidden');
     if (info.updateAvailable) {
       ui.updateBox.className = 'update-box';
@@ -226,30 +221,28 @@ async function checkForUpdates() {
         `<strong>Update available: ${escapeHtml(info.tag)}</strong><br>` +
         `${escapeHtml(info.asset.name)} · ${humanSize(info.asset.size)}` +
         (info.notes ? `<br><br>${escapeHtml(info.notes.slice(0, 400))}` : '');
-      setStatus(`Update ${info.tag} is available`, 'ok');
-      ui.tag.value = info.tag;
+      if (!silent) setStatus(`Update ${info.tag} is available`, 'ok');
     } else {
       ui.updateBox.className = 'update-box ok';
       ui.updateBox.innerHTML = `<strong>Up to date</strong> — ${escapeHtml(info.tag)} is installed.`;
-      setStatus('Client is up to date', 'ok');
+      if (!silent) setStatus('Client is up to date', 'ok');
     }
   } catch (error) {
     ui.updateBox.classList.add('hidden');
-    setStatus(String(error), 'err');
+    if (!silent) setStatus(String(error), 'err');
   } finally {
-    state.busy = false; setButtons();
+    state.busy = false;
+    setButtons();
   }
 }
 
 async function installClient() {
-  const repo = ui.repo.value.trim();
-  if (!repo) { setStatus('Enter a repository as owner/repo', 'err'); return; }
   const target = ui.installDir.value.trim();
   if (!target) { switchTab('settings'); setStatus('Choose an install folder first', 'err'); return; }
   state.busy = true; setButtons();
-  showProgress('Downloading', 'Connecting to GitHub…', 2);
+  showProgress('Downloading', 'Connecting…', 2);
   try {
-    const settings = await invoke('download_and_install', { repo, tag: ui.tag.value.trim(), targetDir: target });
+    const settings = await invoke('download_and_install', { repo: '', tag: '', targetDir: target });
     applySettings(settings);
     await refresh();
     showProgress('Done', `Installed ${settings.installedTag}`, 100);
@@ -435,7 +428,7 @@ async function installModrinthMod(index) {
 function wire() {
   for (const tab of ui.tabs) tab.addEventListener('click', () => switchTab(tab.dataset.tab));
 
-  ui.btnCheck.addEventListener('click', checkForUpdates);
+  ui.btnCheck.addEventListener('click', () => void checkForUpdates());
   ui.btnInstall.addEventListener('click', installClient);
   ui.btnPlay.addEventListener('click', play);
   ui.btnStop.addEventListener('click', stop);
@@ -463,7 +456,7 @@ function wire() {
   ui.minRam.addEventListener('change', () => void persist());
   ui.maxRam.addEventListener('change', () => void persist());
 
-  for (const input of [ui.installDir, ui.repo, ui.javaPath, ui.javaArgs]) {
+  for (const input of [ui.installDir, ui.javaPath, ui.javaArgs]) {
     input.addEventListener('change', () => void persist());
   }
 
@@ -496,7 +489,7 @@ async function start() {
   try {
     await refresh();
     setStatus('Ready');
-    if (ui.repo.value.trim()) void checkForUpdates();
+    void checkForUpdates(true);
   } catch (error) {
     setStatus(String(error), 'err');
   }
