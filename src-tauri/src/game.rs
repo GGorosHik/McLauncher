@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -25,15 +25,15 @@ pub struct LaunchPlan {
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(windows)]
-const DETACHED_PROCESS: u32 = 0x0000_0008;
-#[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
 /// Starts the game process and keeps the handle for a later stop request.
 ///
-/// `.bat` clients run through a hidden `cmd` (`CREATE_NO_WINDOW`, detached standard
-/// handles) so no console window ever flashes. Java clients are detached from the
-/// launcher's console as well.
+/// A `.bat` client is spawned **directly** (no `cmd` wrapper). Windows resolves the
+/// script through the shell association, `CREATE_NO_WINDOW` suppresses the console, and
+/// the exit code is available on the child handle. Wrapping the script in
+/// `cmd /c start /b /wait "<script>"` — or even `cmd /c ""<script>""` from Rust — made
+/// the script silently not run, so it is not used.
 pub fn start(state: &GameState, plan: &LaunchPlan) -> Result<u32, String> {
     {
         let mut guard = state.child.lock().map_err(|_| "Game state is locked.".to_string())?;
@@ -45,24 +45,8 @@ pub fn start(state: &GameState, plan: &LaunchPlan) -> Result<u32, String> {
         *guard = None;
     }
 
-    let is_script = plan
-        .executable
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("bat"));
-
-    let mut command = if is_script {
-        // `start /b` keeps the batch file's own console from being reused, and the
-        // hidden creation flags stop Windows from allocating one in the first place.
-        let mut command = Command::new("cmd");
-        command.arg("/c").arg("start").arg("/b").arg("/wait");
-        command.arg(&plan.executable);
-        command
-    } else {
-        let mut command = Command::new(&plan.executable);
-        command.args(&plan.args);
-        command
-    };
-
+    let mut command = Command::new(&plan.executable);
+    command.args(&plan.args);
     command
         .current_dir(&plan.working_dir)
         .stdin(Stdio::null())
@@ -72,14 +56,7 @@ pub fn start(state: &GameState, plan: &LaunchPlan) -> Result<u32, String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // Hide the console entirely and detach the child from the launcher's own process
-        // group so it survives the launcher closing and never inherits a visible console.
-        let flags = if is_script {
-            CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        } else {
-            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        };
-        command.creation_flags(flags);
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     }
 
     let child = command.spawn().map_err(|error| format!("Could not start the game: {error}"))?;
@@ -113,7 +90,7 @@ pub fn plan(root: &Path, java: &Path, min_ram: u32, max_ram: u32, extra_args: &s
     let mut classpath: Vec<String> = vec![client_jar.to_string_lossy().to_string()];
     collect_jars(&root.join("libraries"), &mut classpath);
     if classpath.len() < 2 {
-        return Err("The libraries folder is empty вЂ” the client looks incomplete. Reinstall it.".to_string());
+        return Err("The libraries folder is empty РІР‚вЂќ the client looks incomplete. Reinstall it.".to_string());
     }
 
     let separator = if cfg!(windows) { ";" } else { ":" };
@@ -246,5 +223,50 @@ mod tests {
         let result = plan(&root, Path::new("java.exe"), 0, 999, "").unwrap();
         assert!(result.executable.ends_with("start.bat"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Runs a real .bat through `start()` and confirms it executed without a console.
+    /// This guards the regression where `cmd /c start /b /wait "<script>"` silently
+    /// skipped the script entirely.
+    #[test]
+    fn bat_script_actually_runs_without_console() {
+        let root = std::env::temp_dir().join("mc-launch-e2e");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let marker = root.join("ran.txt");
+        let script = root.join("start.bat");
+        std::fs::write(
+            &script,
+            format!("@echo off\r\necho executed > \"{}\"\r\n", marker.display()),
+        )
+        .unwrap();
+
+        let plan = LaunchPlan {
+            executable: script.clone(),
+            args: Vec::new(),
+            working_dir: root.clone(),
+            description: "e2e".to_string(),
+        };
+        let state = GameState { child: Mutex::new(None) };
+        start(&state, &plan).expect("launch should succeed");
+
+        // Give cmd a moment to write the marker.
+        for _ in 0..60 {
+            if marker.is_file() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let ran = marker.is_file();
+        let _ = stop(&state);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(ran, "the batch file did not run: the launch command is broken");
     }
 }
