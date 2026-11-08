@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -24,6 +24,70 @@ pub struct LaunchPlan {
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
+const DETACHED_PROCESS: u32 = 0x0000_0008;
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+/// Starts the game process and keeps the handle for a later stop request.
+///
+/// `.bat` clients run through a hidden `cmd` (`CREATE_NO_WINDOW`, detached standard
+/// handles) so no console window ever flashes. Java clients are detached from the
+/// launcher's console as well.
+pub fn start(state: &GameState, plan: &LaunchPlan) -> Result<u32, String> {
+    {
+        let mut guard = state.child.lock().map_err(|_| "Game state is locked.".to_string())?;
+        if let Some(child) = guard.as_mut() {
+            if child.try_wait().ok().flatten().is_none() {
+                return Err("The game is already running.".to_string());
+            }
+        }
+        *guard = None;
+    }
+
+    let is_script = plan
+        .executable
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("bat"));
+
+    let mut command = if is_script {
+        // `start /b` keeps the batch file's own console from being reused, and the
+        // hidden creation flags stop Windows from allocating one in the first place.
+        let mut command = Command::new("cmd");
+        command.arg("/c").arg("start").arg("/b").arg("/wait");
+        command.arg(&plan.executable);
+        command
+    } else {
+        let mut command = Command::new(&plan.executable);
+        command.args(&plan.args);
+        command
+    };
+
+    command
+        .current_dir(&plan.working_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Hide the console entirely and detach the child from the launcher's own process
+        // group so it survives the launcher closing and never inherits a visible console.
+        let flags = if is_script {
+            CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        } else {
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        };
+        command.creation_flags(flags);
+    }
+
+    let child = command.spawn().map_err(|error| format!("Could not start the game: {error}"))?;
+    let pid = child.id();
+    let mut guard = state.child.lock().map_err(|_| "Game state is locked.".to_string())?;
+    *guard = Some(child);
+    Ok(pid)
+}
 
 /// Builds either a `.bat` launch or a direct Java launch, depending on what the install looks like.
 pub fn plan(root: &Path, java: &Path, min_ram: u32, max_ram: u32, extra_args: &str) -> Result<LaunchPlan, String> {
@@ -49,7 +113,7 @@ pub fn plan(root: &Path, java: &Path, min_ram: u32, max_ram: u32, extra_args: &s
     let mut classpath: Vec<String> = vec![client_jar.to_string_lossy().to_string()];
     collect_jars(&root.join("libraries"), &mut classpath);
     if classpath.len() < 2 {
-        return Err("The libraries folder is empty — the client looks incomplete. Reinstall it.".to_string());
+        return Err("The libraries folder is empty вЂ” the client looks incomplete. Reinstall it.".to_string());
     }
 
     let separator = if cfg!(windows) { ";" } else { ":" };
@@ -129,45 +193,6 @@ fn collect_jars(directory: &Path, out: &mut Vec<String>) {
             out.push(path.to_string_lossy().to_string());
         }
     }
-}
-
-/// Starts the game process and keeps the handle for a later stop request.
-pub fn start(state: &GameState, plan: &LaunchPlan) -> Result<u32, String> {
-    {
-        let mut guard = state.child.lock().map_err(|_| "Game state is locked.".to_string())?;
-        if let Some(child) = guard.as_mut() {
-            if child.try_wait().ok().flatten().is_none() {
-                return Err("The game is already running.".to_string());
-            }
-        }
-        *guard = None;
-    }
-
-    let mut command = if plan.executable.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("bat")) {
-        let mut command = Command::new("cmd");
-        command.arg("/c").arg(&plan.executable);
-        command
-    } else {
-        let mut command = Command::new(&plan.executable);
-        command.args(&plan.args);
-        command
-    };
-    command
-        .current_dir(&plan.working_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let child = command.spawn().map_err(|error| format!("Could not start the game: {error}"))?;
-    let pid = child.id();
-    let mut guard = state.child.lock().map_err(|_| "Game state is locked.".to_string())?;
-    *guard = Some(child);
-    Ok(pid)
 }
 
 pub fn stop(state: &GameState) -> Result<(), String> {

@@ -3,6 +3,7 @@
 mod config;
 mod game;
 mod java;
+mod mods;
 mod update;
 
 use std::{
@@ -88,7 +89,7 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
 }
 
 #[tauri::command]
-fn pick_directory(app: AppHandle, start: String) -> Result<Option<String>, String> {
+async fn pick_directory(app: AppHandle, start: String) -> Result<Option<String>, String> {
     let mut dialog = rfd::FileDialog::new().set_title("Choose a folder for the Minecraft client");
     let start_path = PathBuf::from(start.trim());
     if start_path.is_dir() {
@@ -96,22 +97,41 @@ fn pick_directory(app: AppHandle, start: String) -> Result<Option<String>, Strin
     } else if let Some(parent) = start_path.parent().filter(|path| path.is_dir()) {
         dialog = dialog.set_directory(parent);
     }
-    let Some(window) = app.get_webview_window("main") else { return Ok(None) };
-    Ok(dialog
-        .set_parent(&window)
-        .pick_folder()
-        .map(|path| path.to_string_lossy().to_string()))
+    // Report the pick back to the window that asked for it. The dialog is spawned on a
+    // blocking pool thread so the webview stays responsive while it is open.
+    let window = app.get_webview_window("main").ok_or_else(|| "The main window is gone.".to_string())?;
+    let picked = tauri::async_runtime::spawn_blocking(move || dialog.pick_folder())
+        .await
+        .map_err(|error| format!("Folder dialog failed: {error}"))?;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let value = path.to_string_lossy().to_string();
+    window
+        .emit("dialog://folder", value.clone())
+        .map_err(|error| format!("Could not deliver the folder: {error}"))?;
+    Ok(Some(value))
 }
 
 #[tauri::command]
-fn pick_java(app: AppHandle) -> Result<Option<String>, String> {
-    let Some(window) = app.get_webview_window("main") else { return Ok(None) };
-    Ok(rfd::FileDialog::new()
-        .set_title("Choose java.exe")
-        .add_filter("Java executable", &["exe"])
-        .set_parent(&window)
-        .pick_file()
-        .map(|path| path.to_string_lossy().to_string()))
+async fn pick_java(app: AppHandle) -> Result<Option<String>, String> {
+    let window = app.get_webview_window("main").ok_or_else(|| "The main window is gone.".to_string())?;
+    let picked = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Choose java.exe")
+            .add_filter("Java executable", &["exe"])
+            .pick_file()
+    })
+    .await
+    .map_err(|error| format!("File dialog failed: {error}"))?;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let value = path.to_string_lossy().to_string();
+    window
+        .emit("dialog://java", value.clone())
+        .map_err(|error| format!("Could not deliver the path: {error}"))?;
+    Ok(Some(value))
 }
 
 #[tauri::command]
@@ -222,6 +242,74 @@ fn is_game_running(state: State<'_, GameState>) -> bool {
     game::is_running(&state)
 }
 
+#[tauri::command]
+fn mods_dir(app: AppHandle) -> Result<String, String> {
+    let settings = config::load_settings(&app)?;
+    let dir = mods::mods_dir(PathBuf::from(settings.install_dir.trim()).as_path())?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn list_mods(app: AppHandle) -> Result<Vec<mods::LocalMod>, String> {
+    let settings = config::load_settings(&app)?;
+    mods::list(PathBuf::from(settings.install_dir.trim()).as_path())
+}
+
+#[tauri::command]
+fn set_mod_enabled(app: AppHandle, file_name: String, enabled: bool) -> Result<(), String> {
+    let settings = config::load_settings(&app)?;
+    mods::set_enabled(PathBuf::from(settings.install_dir.trim()).as_path(), &file_name, enabled)
+}
+
+#[tauri::command]
+fn remove_mod(app: AppHandle, file_name: String) -> Result<(), String> {
+    let settings = config::load_settings(&app)?;
+    mods::remove(PathBuf::from(settings.install_dir.trim()).as_path(), &file_name)
+}
+
+#[tauri::command]
+async fn pick_mod_file(app: AppHandle) -> Result<Option<String>, String> {
+    let picked = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Choose a mod (.jar)")
+            .add_filter("Minecraft mod", &["jar"])
+            .pick_files()
+    })
+    .await
+    .map_err(|error| format!("File dialog failed: {error}"))?;
+    let Some(paths) = picked else { return Ok(None) };
+    let mut added = Vec::new();
+    let settings = config::load_settings(&app)?;
+    let root = PathBuf::from(settings.install_dir.trim());
+    for path in paths {
+        let source = path.to_string_lossy().to_string();
+        if let Ok(name) = mods::add_local(&root, &source) {
+            added.push(name);
+        }
+    }
+    Ok(Some(added.join("\n")))
+}
+
+#[tauri::command]
+fn search_mods(query: String, game_version: String) -> Result<Vec<mods::ModHit>, String> {
+    mods::search(&query, &game_version)
+}
+
+#[tauri::command]
+fn install_mod_from_modrinth(app: AppHandle, project_id: String, game_version: String) -> Result<String, String> {
+    let settings = config::load_settings(&app)?;
+    mods::install_from_modrinth(PathBuf::from(settings.install_dir.trim()).as_path(), &project_id, &game_version)
+}
+
+#[tauri::command]
+fn open_mods_folder(app: AppHandle) -> Result<String, String> {
+    let settings = config::load_settings(&app)?;
+    let dir = mods::mods_dir(PathBuf::from(settings.install_dir.trim()).as_path())?;
+    let path = dir.to_string_lossy().to_string();
+    let _ = tauri_plugin_opener::open_path(&path, None::<&str>);
+    Ok(path)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -237,6 +325,14 @@ fn main() {
             launch_game,
             stop_game,
             is_game_running,
+            mods_dir,
+            list_mods,
+            set_mod_enabled,
+            remove_mod,
+            pick_mod_file,
+            search_mods,
+            install_mod_from_modrinth,
+            open_mods_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the launcher");
